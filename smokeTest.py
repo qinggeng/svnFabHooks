@@ -3,6 +3,7 @@ import svnDiffParser, sys
 import settings, differential
 from phabricator import Phabricator 
 from fabricatorTools.fab import getFab, getUsers
+from fabUtils import *
 fab = getFab()
 
 username = settings.USER['name']
@@ -22,11 +23,15 @@ def testFab():
     ret = fab.differential.query(ids = [1])
     print ret
 
+def testAddTaskComment():
+    print addTaskComment(tid = 1, comment = 'test')
+
 tests = {
-    'differential': testDifferential,
-    'fab': testFab,
-    'diffReview': createReviewRequest,
-    'getDiffRevision': getDiffRevision,
+    'differential'    : testDifferential,
+    'fab'             : testFab,
+    'diffReview'      : createReviewRequest,
+    'getDiffRevision' : getDiffRevision,
+    'addTaskComment'  : testAddTaskComment,
 }
 
 if __name__ == '__main__':

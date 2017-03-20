@@ -1,12 +1,44 @@
 #!/usr/bin/env python
 #-*- coding: utf-8 -*-
 import settings
-import os, sys
+import os, sys, functools
 from differential import getDiffRevision
+from osUtils import subcmd
+import fabUtils, svnUtils
+from fabricatorTools.task import TaskInfoFactory
 
-def subcmd(cmd):
-    from subprocess import Popen, PIPE
-    return Popen(cmd, shell = True, stdout = PIPE, stderr = PIPE).communicate()
+oldStdout = sys.stdout
+sys.stdout = sys.stderr
+
+def validateTasks(logArgs, context):
+    try:
+        tif     = TaskInfoFactory()
+        actions = []
+        nextRev = context['youngestRev']() + 1
+        author  = context['author']()
+        for tid in map(lambda x: x.strip(), logArgs['tasks'].split(',')):
+            try:
+                tid = int(tid)
+            except Exception, e:
+                tid = int(tid.strip()[1:])
+            task = tif.info(int(tid))
+            if True == tif.isClosed(tid):
+                print 'commit failed due to task ' + tid + ' alread closed'
+                return False
+            comment = u'{author} commit at rev{rev} for task {tid}'.format(
+                    author = author,
+                    rev = nextRev,
+                    tid= tid)
+            actions.append(functools.partial(fabUtils.addTaskComment, tid = tid, comment = comment))
+        for action in actions:
+            action()
+        return True
+            
+    except Exception, e:
+        print 'commit failed due to missing @tasks in commit log'
+        print e
+        return False
+
 
 def preProcessSvnlookDiff(rawDiff):
     lines = rawDiff.strip()
@@ -43,43 +75,52 @@ def extractLogArgs(rawLog):
     return args
 
 def compareDiffs(commitDiff, reviewDiff):
+    u"""按文件逐个比较两个diff"""
     for f, d in commitDiff.iteritems():
         if f not in reviewDiff:
-            print >> sys.stderr, 'commit missing in review request:', f
+            print 'commit missing in review request:', f
             return False
         if d != reviewDiff[f]:
-            print >> sys.stderr, 'commit content mismatch in review request:', f
+            print 'commit content mismatch in review request:', f
             return False
     return True
-
 
 svnlook = sys.argv[1]
 transaction = sys.argv[2]
 repo = sys.argv[3]
-print >> sys.stderr, "args:", svnlook, transaction, repo
+context = {}
+context['youngestRev'] = functools.partial(svnUtils.youngestRevision, svnlook, repo)
+context['author']      = functools.partial(svnUtils.author, svnlook, repo, transaction)
+#print "args:", svnlook, transaction, repo
 # 从log中抽取review信息
 cmd = '{cmd} log -t {txn} "{repo}"'.format(cmd = svnlook, txn = transaction, repo = repo)
-cmdout, cmderr = subcmd(cmd)
+cmdout, cmderr, _ = subcmd(cmd)
 logArgs = extractLogArgs(cmdout)
+#print logArgs
 try:
     diffUri = logArgs['diffUri'].strip()
 except Exception, e:
-    print >> sys.stderr, 'commit failed for: missing argument "diffUri" in commit log'
+    print 'commit failed for: missing argument "diffUri" in commit log'
     exit(1)
 diffState = getDiffRevision(uri = diffUri)
 if diffState['status'] != 'closed':
-    print >> sys.stderr, 'commit failed due to this review request is not close'
+    print 'commit failed due to this review request is not close'
     exit(1)
 reviewDiff = preProcessSvnlookDiff(getReviewDiff(diffUri))
 reviewDiff = formatDiff(reviewDiff)
 # 获得本次提交的diff
 cmd = '{cmd} diff -t {txn} "{repo}"'.format(cmd = svnlook, txn = transaction, repo = repo)
-substdout, substderr = subcmd(cmd)
+substdout, substderr, _ = subcmd(cmd)
 try:
     commitDiff = formatDiff(preProcessSvnlookDiff(substdout))
     ret = compareDiffs(commitDiff, reviewDiff)
     if False == ret:
         exit(1)
-    exit(0)
 except Exception, e:
     exit(1)
+if False == validateTasks(logArgs, context):
+    exit(1)
+
+if 'mock' in logArgs:
+    exit(1)
+exit(0)
